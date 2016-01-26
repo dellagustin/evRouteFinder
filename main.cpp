@@ -12,7 +12,7 @@
 using namespace std;
 
 // switches
-#define _LOGGING_
+// #define _LOGGING_
 
 class CWayPoint : public CGePoint2d
 {
@@ -467,6 +467,88 @@ bool CRouteArray::operator== (const CRouteArray& otherRouteArray) const
 
 // }} CRouteArray
 
+// CRouteArrayPtrContainer {{
+
+class CRouteArrayPtrContainer
+{
+public:
+    CRouteArrayPtrContainer();
+    CRouteArrayPtrContainer(CRouteArray* pRouteArray);
+    ~CRouteArrayPtrContainer();
+
+public:
+    void setRouteArrayPtr(CRouteArray* pRouteArray, bool bDeletePtr = true);
+    CRouteArray* routeArrayPtr();
+    const CRouteArray* routeArrayPtr() const;
+    void deletePtr();
+
+public:
+    bool operator< (const CRouteArrayPtrContainer&) const;
+
+private:
+    CRouteArray* m_pRouteArray;
+};
+
+typedef vector<CRouteArrayPtrContainer> CRouteArrayPtrContainerArray;
+
+CRouteArrayPtrContainer::CRouteArrayPtrContainer()
+{
+    m_pRouteArray = NULL;
+}
+
+CRouteArrayPtrContainer::CRouteArrayPtrContainer(CRouteArray* pRouteArray)
+{
+    m_pRouteArray = pRouteArray;
+}
+
+CRouteArrayPtrContainer::~CRouteArrayPtrContainer()
+{
+}
+
+void CRouteArrayPtrContainer::setRouteArrayPtr(CRouteArray* pRouteArray, bool bDeletePtr)
+{
+    if(bDeletePtr)
+    {
+        deletePtr();
+    }
+
+    m_pRouteArray = pRouteArray;
+}
+
+CRouteArray* CRouteArrayPtrContainer::routeArrayPtr()
+{
+    return m_pRouteArray;
+}
+
+const CRouteArray* CRouteArrayPtrContainer::routeArrayPtr() const
+{
+    return m_pRouteArray;
+}
+
+void CRouteArrayPtrContainer::deletePtr()
+{
+    if(m_pRouteArray)
+        delete m_pRouteArray;
+
+    m_pRouteArray = NULL;
+}
+
+bool CRouteArrayPtrContainer::operator< (const CRouteArrayPtrContainer& otherRouteArrayPtrContainer) const
+{
+    if(m_pRouteArray && otherRouteArrayPtrContainer.m_pRouteArray)
+    {
+        return *(m_pRouteArray) < *(otherRouteArrayPtrContainer.m_pRouteArray);
+    }
+    else if(otherRouteArrayPtrContainer.m_pRouteArray)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+// }} CRouteArrayPtrContainer
+
 struct struct_sim_settings
 {
     unsigned int uiWinnerSamples;
@@ -475,50 +557,53 @@ struct struct_sim_settings
 	unsigned int uiChildsPerPair;
 	unsigned int uiMaxMutationLevel;
 	double fMutationChance;
+
+	// output handlers
+	FILE *pStdErr;
+	FILE *pStdOut;
 };
 
 void filter_best_samples(CRouteArrayArray& routeArrayArray, unsigned int uiSamples)
 {
-    /*
-    bool bContinue;
+    CRouteArrayArray otherRouteArrayArray;
+    CRouteArrayPtrContainerArray routeArrayPtrContainerArray;
+    unsigned int i;
 
-    // simple bubble sort
-    do
+    routeArrayPtrContainerArray.reserve(routeArrayArray.size());
+
+    for(i = 0; i < routeArrayArray.size(); i++)
     {
-        bContinue = false;
-
-        unsigned int i;
-        for(i = 0; i < routeArrayArray.size()-1; i++)
-        {
-            if(routeArrayArray[i].totalTravelDistanceCached() > routeArrayArray[i+1].totalTravelDistanceCached())
-            {
-                bContinue = true;
-                swap(routeArrayArray[i], routeArrayArray[i+1]);
-                // routeArrayArray[i].swap(routeArrayArray[i+1]);
-            }
-        }
+        CRouteArrayPtrContainer routeArrayPtrContainer(&routeArrayArray[i]);
+        routeArrayPtrContainerArray.push_back(routeArrayPtrContainer);
     }
-    while(bContinue);
 
-    routeArrayArray.resize(uiSamples);
-    */
-    sort(routeArrayArray.begin(), routeArrayArray.end());
+    sort(routeArrayPtrContainerArray.begin(), routeArrayPtrContainerArray.end());
 
     // remove repeated samples
-    unsigned int i;
-    for(i = 0; i < routeArrayArray.size()-1; i++)
+
+    otherRouteArrayArray.reserve(uiSamples);
+
+    if(routeArrayPtrContainerArray.size() > 0)
     {
-        if(routeArrayArray[i].totalTravelDistanceCached() == routeArrayArray[i+1].totalTravelDistanceCached())
+        otherRouteArrayArray.push_back(*(routeArrayPtrContainerArray[0].routeArrayPtr()));
+    }
+
+    for(i = 1; i < routeArrayPtrContainerArray.size() && otherRouteArrayArray.size() < uiSamples ; i++)
+    {
+        if(routeArrayPtrContainerArray[i].routeArrayPtr()->totalTravelDistanceCached() !=
+            routeArrayPtrContainerArray[i-1].routeArrayPtr()->totalTravelDistanceCached())
         {
-            routeArrayArray.erase(routeArrayArray.begin() + i + 1);
-            i--;
+            otherRouteArrayArray.push_back(*(routeArrayPtrContainerArray[i].routeArrayPtr()));
+        }
+        else
+        {
 #ifdef _LOGGING_
-            fprintf(stderr, "Twin removed.\n");
+            fprintf(stderr, "Twin detected.\n");
 #endif
         }
     }
 
-    routeArrayArray.resize(uiSamples);
+    routeArrayArray = otherRouteArrayArray;
 }
 
 int create_child(const struct_sim_settings& sim_settings, const CWayPointArray& wayPointArray, const CRouteArray& routeArray1, const CRouteArray& routeArray2, CRouteArray& childRouteArray)
@@ -632,6 +717,8 @@ int create_childs(const struct_sim_settings& sim_settings, const CWayPointArray&
 
     uiOldRouteArrayArrayLength = routeArrayArray.size();
 
+    routeArrayArray.reserve(sim_settings.uiChildsPerPair*routeArrayArray.size()*routeArrayArray.size()/2);
+
     for(i = 0; i < uiOldRouteArrayArrayLength; i++)
     {
         for(j = i+1; j < uiOldRouteArrayArrayLength; j++)
@@ -719,21 +806,27 @@ int main(int argc, const char *argv[])
 
 	CWayPointArray wayPointArray;
 	CRouteArrayArray routeArrayArray;
+	// CRouteArrayPtrContainerArray routeArrayPtrContainerArray;
 	CRouteArray propertySourceArray;
 
     // cfg values
-	sim_settings.uiWinnerSamples = 50;
+	sim_settings.uiWinnerSamples = 80;
     sim_settings.uiMaxIterations = 1200;
-    sim_settings.uiMaxSamples = 60;
-    sim_settings.uiChildsPerPair = 1;
-    sim_settings.uiMaxMutationLevel = 10;
+    sim_settings.uiMaxSamples = 100;
+    sim_settings.uiChildsPerPair = 2;
+    sim_settings.uiMaxMutationLevel = 5;
     sim_settings.fMutationChance = 0.3;
 
-    // set route array properties
-    propertySourceArray.resize(2);
+    // output handlers
+    sim_settings.pStdErr = stderr;
+    sim_settings.pStdOut = stdout;
 
-    propertySourceArray[0].setMaxWayPoints(20);
-    propertySourceArray[1].setMaxWayPoints(20);
+    // set route array properties
+    // propertySourceArray.resize(2);
+    propertySourceArray.resize(1);
+
+    propertySourceArray[0].setMaxWayPoints(100);
+    // propertySourceArray[1].setMaxWayPoints(20);
     // propertySourceArray[2].setMaxWayPoints(40);
     // propertySourceArray[3].setMaxWayPoints(20);
     // propertySourceArray[4].setMaxWayPoints(20);
@@ -741,12 +834,14 @@ int main(int argc, const char *argv[])
 
     // set way point array
     unsigned int i;
-    for(i = 0; i < 30; i++)
+    for(i = 0; i < 100; i++)
     {
         CWayPoint bufferWayPoint;
 
-        bufferWayPoint.m_fx = rand() % 1000;
-        bufferWayPoint.m_fy = rand() % 1000;
+        // bufferWayPoint.m_fx = rand() % 1000;
+        bufferWayPoint.m_fx = 0.0;
+        // bufferWayPoint.m_fy = rand() % 1000;
+        bufferWayPoint.m_fy = (double)i;
         bufferWayPoint.m_Id = i+1;
 
         wayPointArray.push_back(bufferWayPoint);
@@ -773,36 +868,55 @@ int main(int argc, const char *argv[])
     }
     */
 
-
     for(uiIteration = 0; uiIteration < sim_settings.uiMaxIterations; uiIteration++)
     {
+        fprintf(sim_settings.pStdErr, "%4u: Starting Iteration.\n", uiIteration);
+
         // generate the random routes needed
         if(routeArrayArray.size() < sim_settings.uiMaxSamples)
+        {
+            fprintf(sim_settings.pStdErr, "%4u: Generating %u random routes... ", uiIteration, (unsigned int)(sim_settings.uiMaxSamples - routeArrayArray.size()));
             generate_random_route_arrays(wayPointArray, propertySourceArray, routeArrayArray, sim_settings.uiMaxSamples - routeArrayArray.size());
+            fprintf(sim_settings.pStdErr, "Done!\n");
+        }
 
         // generate childs
+        fprintf(sim_settings.pStdErr, "%4u: Generating childs... ", uiIteration);
         create_childs(sim_settings, wayPointArray, routeArrayArray);
+        fprintf(sim_settings.pStdErr, "Done!\n");
 
         // obtain distance
+        fprintf(sim_settings.pStdErr, "%4u: Updating distance cache... ", uiIteration);
+
     	unsigned int j;
     	for(j = 0; j < routeArrayArray.size(); j++)
     	{
             routeArrayArray[j].updateTotalTravelDistanceCache();
     	}
 
+    	fprintf(sim_settings.pStdErr, "Done!\n");
+
     	// get average distance
 		double fAverageDistance;
-		average_distance(routeArrayArray, fAverageDistance);
-		fprintf(stdout, "BF: %u\t%f\n", uiIteration, fAverageDistance);
+		// average_distance(routeArrayArray, fAverageDistance);
+		// fprintf(stdout, "%4u: BF: %f\n", uiIteration, fAverageDistance);
 
 		// filter best samples
+		fprintf(sim_settings.pStdErr, "%4u: Filtering best samples... ", uiIteration);
 		filter_best_samples(routeArrayArray, sim_settings.uiWinnerSamples);
+		fprintf(sim_settings.pStdErr, "Done!\n");
 
 		// get average distance
 		average_distance(routeArrayArray, fAverageDistance);
-        fprintf(stdout, "AF: %u\t%f\t%f\n", uiIteration, fAverageDistance, routeArrayArray.size() > 0 ? routeArrayArray[0].totalTravelDistanceCached(): 0.0);
+        // fprintf(stdout, "%4u AF: %f\t%f\n", uiIteration, fAverageDistance, routeArrayArray.size() > 0 ? routeArrayArray[0].totalTravelDistanceCached() : 0.0);
+        // fprintf(stdout, "%4u AF: %f\t%f\n", uiIteration, fAverageDistance, routeArrayArray.size() > 0 ? routeArrayArray[0].totalTravelDistanceCached() : 0.0);
+        fprintf(stdout, "%4u\t%f\t%f\n", uiIteration, fAverageDistance, routeArrayArray.size() > 0 ? routeArrayArray[0].totalTravelDistanceCached() : 0.0);
+
+        if(routeArrayArray[0].totalTravelDistanceCached() < 30.0)
+            break;
     }
 
+#if 0
     // print the best route
     for(i = 0; i < routeArrayArray[0].size(); i++)
     {
@@ -817,6 +931,7 @@ int main(int argc, const char *argv[])
             }
         }
     }
+#endif
 
     return 0;
 }
